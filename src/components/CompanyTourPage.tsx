@@ -48,6 +48,48 @@ export const CompanyTourPage: React.FC = () => {
   });
   const [hasSeekLag, setHasSeekLag] = useState<boolean>(false);
 
+  // iOS Safari decoder priming tracker
+  const primedRef = useRef<{ part1: boolean; part2: boolean }>({ part1: false, part2: false });
+
+  // Prime video on iOS Safari / WebKit by briefly playing and pausing (enables hardware CALayer texture)
+  const primeVideo = useCallback(async (video: HTMLVideoElement | null, trackId: 'part1' | 'part2') => {
+    if (!video || primedRef.current[trackId]) return;
+    try {
+      video.muted = true;
+      video.playsInline = true;
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+        video.pause();
+        primedRef.current[trackId] = true;
+      }
+    } catch {
+      // Will be primed on first user gesture
+    }
+  }, []);
+
+  // Guarantee iOS priming on the very first touch/scroll anywhere on the screen
+  useEffect(() => {
+    const handleFirstTouchOrInteraction = () => {
+      if (video1Ref.current && !primedRef.current.part1) {
+        primeVideo(video1Ref.current, 'part1');
+      }
+      if (video2Ref.current && shouldLoadVideo2 && !primedRef.current.part2) {
+        primeVideo(video2Ref.current, 'part2');
+      }
+    };
+
+    window.addEventListener('touchstart', handleFirstTouchOrInteraction, { passive: true, once: true });
+    window.addEventListener('pointerdown', handleFirstTouchOrInteraction, { passive: true, once: true });
+    window.addEventListener('scroll', handleFirstTouchOrInteraction, { passive: true, once: true });
+
+    return () => {
+      window.removeEventListener('touchstart', handleFirstTouchOrInteraction);
+      window.removeEventListener('pointerdown', handleFirstTouchOrInteraction);
+      window.removeEventListener('scroll', handleFirstTouchOrInteraction);
+    };
+  }, [primeVideo, shouldLoadVideo2]);
+
   // Compute active video URLs based on selected quality tier
   const track1Src = quality === 'lite' && track1.liteSrc ? track1.liteSrc : track1.src;
   const track2Src = quality === 'lite' && track2.liteSrc ? track2.liteSrc : track2.src;
@@ -313,15 +355,11 @@ export const CompanyTourPage: React.FC = () => {
             preload="auto"
             onLoadedData={() => {
               setVideo1Loaded(true);
-              if (video1Ref.current && video1Ref.current.currentTime === 0) {
-                video1Ref.current.currentTime = 0.001;
-              }
+              primeVideo(video1Ref.current, 'part1');
             }}
             onCanPlay={() => {
               setVideo1Loaded(true);
-              if (video1Ref.current && video1Ref.current.currentTime === 0) {
-                video1Ref.current.currentTime = 0.001;
-              }
+              primeVideo(video1Ref.current, 'part1');
             }}
             onError={() => setLoadError('Unable to load exterior video footage.')}
             className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 will-change-transform ${
@@ -348,8 +386,14 @@ export const CompanyTourPage: React.FC = () => {
             // @ts-ignore
             webkit-playsinline="true"
             preload={shouldLoadVideo2 ? 'auto' : 'none'}
-            onLoadedData={() => setVideo2Loaded(true)}
-            onCanPlay={() => setVideo2Loaded(true)}
+            onLoadedData={() => {
+              setVideo2Loaded(true);
+              primeVideo(video2Ref.current, 'part2');
+            }}
+            onCanPlay={() => {
+              setVideo2Loaded(true);
+              primeVideo(video2Ref.current, 'part2');
+            }}
             onError={() => {
               if (shouldLoadVideo2) {
                 setLoadError('Unable to load interior video footage.');
@@ -404,7 +448,7 @@ export const CompanyTourPage: React.FC = () => {
         }}
         onStartTour={() => {
           if (video1Ref.current) {
-            video1Ref.current.currentTime = 0.001;
+            primeVideo(video1Ref.current, 'part1');
           }
         }}
       />
