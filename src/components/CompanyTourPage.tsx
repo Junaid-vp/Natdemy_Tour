@@ -40,7 +40,12 @@ export const CompanyTourPage: React.FC = () => {
     if (typeof window === 'undefined') return 'hd';
     try {
       const nav = navigator as any;
-      if (nav.connection?.saveData === true || ['slow-2g', '2g'].includes(nav.connection?.effectiveType)) {
+      if (
+        nav.connection?.saveData === true ||
+        ['slow-2g', '2g', '3g'].includes(nav.connection?.effectiveType) ||
+        (typeof nav.hardwareConcurrency === 'number' && nav.hardwareConcurrency <= 4) ||
+        (typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 4)
+      ) {
         return 'lite';
       }
     } catch {}
