@@ -15,90 +15,80 @@ export function useScrollVideoScrubber({
   isActive,
   onTimeUpdate,
   onBufferingChange,
-  onSeekLagDetected,
 }: ScrubberOptions) {
-  const pendingTargetTime = useRef<number | null>(null);
+  const targetTimeRef = useRef<number>(0.001);
+  const isSeekingRef = useRef<boolean>(false);
   const rafId = useRef<number | null>(null);
-  const isSeeking = useRef<boolean>(false);
-  const lastReportedTime = useRef<number>(-1);
-  const lastUpdateTimeStamp = useRef<number>(0);
-  const seekStartTime = useRef<number>(0);
-  const dynamicThrottleMs = useRef<number>(75);
-  const slowSeeksCount = useRef<number>(0);
+  const seekWatchdogRef = useRef<any>(null);
+  const lastDispatchedTimeRef = useRef<number>(-1);
 
-  // Throttled notification to React state to prevent 60fps re-renders
-  const notifyTimeUpdate = useCallback(
-    (time: number, force = false) => {
-      if (!onTimeUpdate) return;
-      const now = performance.now();
-      if (
-        force ||
-        now - lastUpdateTimeStamp.current > dynamicThrottleMs.current ||
-        Math.abs(time - lastReportedTime.current) > 0.4
-      ) {
-        lastReportedTime.current = time;
-        lastUpdateTimeStamp.current = now;
-        onTimeUpdate(time);
+  // Notify React of the ACTUAL video playback position (not the scroll target)
+  const notifyActualTime = useCallback(
+    (actualTime: number) => {
+      if (!onTimeUpdate || !Number.isFinite(actualTime)) return;
+      if (Math.abs(actualTime - lastDispatchedTimeRef.current) > 0.06) {
+        lastDispatchedTimeRef.current = actualTime;
+        onTimeUpdate(actualTime);
       }
     },
     [onTimeUpdate]
   );
 
-  // Apply seek to video element
-  const applySeek = useCallback(
-    (time: number) => {
-      const video = videoRef.current;
-      if (!video || !Number.isFinite(time)) return;
+  // Core seek dispatcher with watchdog to prevent any freeze during fast/speed scrolling
+  const performSeek = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !isActive) return;
 
-      // Ensure clampedTime is at least 0.001s so mobile Safari/WebKit decodes and paints the first frame
-      const clampedTime = Math.max(0.001, Math.min(time, duration));
+    const target = Math.max(0.001, Math.min(targetTimeRef.current, duration));
+    const delta = Math.abs(video.currentTime - target);
 
-      // Don't seek if delta is negligible (unless video hasn't rendered first frame yet)
-      if (Math.abs(video.currentTime - clampedTime) < 0.01 && video.currentTime > 0) {
-        notifyTimeUpdate(clampedTime);
-        return;
-      }
+    // If already at target, notify and finish
+    if (delta < 0.015) {
+      notifyActualTime(video.currentTime);
+      return;
+    }
 
-      if (video.seeking || isSeeking.current) {
-        // Coalesce: keep only the latest requested seek time
-        pendingTargetTime.current = clampedTime;
-      } else {
-        try {
-          isSeeking.current = true;
-          seekStartTime.current = performance.now();
+    // If browser is actively in the middle of a seek, let the current seek finish or wait for watchdog
+    if (video.seeking || isSeekingRef.current) {
+      return;
+    }
 
-          // Use fastSeek if available and scrub is large, otherwise exact currentTime
-          const delta = Math.abs(video.currentTime - clampedTime);
-          if (typeof (video as any).fastSeek === 'function' && delta > 1.5) {
-            (video as any).fastSeek(clampedTime);
-          } else {
-            video.currentTime = clampedTime;
-          }
+    try {
+      isSeekingRef.current = true;
+      video.currentTime = target;
 
-          notifyTimeUpdate(clampedTime);
-        } catch {
-          isSeeking.current = false;
+      // Watchdog: If seeked event does not fire within 65ms, clear seeking lock
+      // This prevents WebKit/mobile browsers from ever hanging/freezing on fast scrolls
+      if (seekWatchdogRef.current) clearTimeout(seekWatchdogRef.current);
+      seekWatchdogRef.current = setTimeout(() => {
+        isSeekingRef.current = false;
+        // Trigger next frame catch-up if still not at target
+        if (videoRef.current && Math.abs(videoRef.current.currentTime - targetTimeRef.current) > 0.02) {
+          performSeek();
         }
-      }
-    },
-    [videoRef, duration, notifyTimeUpdate]
-  );
+      }, 65);
+    } catch {
+      isSeekingRef.current = false;
+    }
+  }, [videoRef, duration, isActive, notifyActualTime]);
 
   // Request scrub to target time (scheduled via RAF)
   const seekTo = useCallback(
     (targetTime: number) => {
       if (!isActive) return;
 
+      targetTimeRef.current = Math.max(0.001, Math.min(targetTime, duration));
+
       if (rafId.current !== null) {
         cancelAnimationFrame(rafId.current);
       }
 
       rafId.current = requestAnimationFrame(() => {
-        applySeek(targetTime);
+        performSeek();
         rafId.current = null;
       });
     },
-    [isActive, applySeek]
+    [isActive, duration, performSeek]
   );
 
   useEffect(() => {
@@ -106,36 +96,29 @@ export function useScrollVideoScrubber({
     if (!video) return;
 
     const handleSeeked = () => {
-      const now = performance.now();
-      const seekDuration = now - seekStartTime.current;
-
-      // Adaptive throttle: If device hardware decoder is taking > 110ms per seek,
-      // back off throttle frequency to protect low-end CPU/GPU from backpressure
-      if (seekDuration > 110) {
-        slowSeeksCount.current += 1;
-        dynamicThrottleMs.current = Math.min(160, dynamicThrottleMs.current + 15);
-        if (slowSeeksCount.current >= 4) {
-          onSeekLagDetected?.();
-        }
-      } else if (seekDuration < 45 && dynamicThrottleMs.current > 75) {
-        dynamicThrottleMs.current = Math.max(75, dynamicThrottleMs.current - 10);
+      if (seekWatchdogRef.current) {
+        clearTimeout(seekWatchdogRef.current);
+        seekWatchdogRef.current = null;
       }
-
-      isSeeking.current = false;
+      isSeekingRef.current = false;
       onBufferingChange?.(false);
 
-      // If a newer seek was queued during this seek, process it immediately
-      if (pendingTargetTime.current !== null) {
-        const nextTime = pendingTargetTime.current;
-        pendingTargetTime.current = null;
-        applySeek(nextTime);
-      } else {
-        notifyTimeUpdate(video.currentTime, true);
+      // Report actual video time to React
+      notifyActualTime(video.currentTime);
+
+      // If user kept scrolling while this seek was executing, immediately seek towards latest target
+      const delta = Math.abs(video.currentTime - targetTimeRef.current);
+      if (delta > 0.02) {
+        performSeek();
       }
     };
 
+    const handleTimeUpdate = () => {
+      notifyActualTime(video.currentTime);
+    };
+
     const handleSeeking = () => {
-      isSeeking.current = true;
+      isSeekingRef.current = true;
     };
 
     const handleWaiting = () => {
@@ -147,20 +130,21 @@ export function useScrollVideoScrubber({
     };
 
     video.addEventListener('seeked', handleSeeked);
+    video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('seeking', handleSeeking);
     video.addEventListener('waiting', handleWaiting);
     video.addEventListener('canplay', handleCanPlay);
 
     return () => {
       video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('seeking', handleSeeking);
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('canplay', handleCanPlay);
-      if (rafId.current !== null) {
-        cancelAnimationFrame(rafId.current);
-      }
+      if (seekWatchdogRef.current) clearTimeout(seekWatchdogRef.current);
+      if (rafId.current !== null) cancelAnimationFrame(rafId.current);
     };
-  }, [videoRef, applySeek, notifyTimeUpdate, onBufferingChange, onSeekLagDetected]);
+  }, [videoRef, performSeek, notifyActualTime, onBufferingChange]);
 
   return { seekTo };
 }

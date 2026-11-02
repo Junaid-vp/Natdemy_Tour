@@ -28,7 +28,6 @@ export const CompanyTourPage: React.FC = () => {
   // Reactive state for UI updates (throttled)
   const [currentTrackId, setCurrentTrackId] = useState<'part1' | 'part2'>('part1');
   const [currentTrackTime, setCurrentTrackTime] = useState<number>(0);
-  const [totalProgress, setTotalProgress] = useState<number>(0);
   const [activeMarkers, setActiveMarkers] = useState<RoomMarker[]>([]);
   const [isDirectoryOpen, setIsDirectoryOpen] = useState<boolean>(false);
   const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false);
@@ -141,7 +140,6 @@ export const CompanyTourPage: React.FC = () => {
     if (maxScroll <= 0) return;
 
     const normalized = Math.max(0, Math.min(1, scrollTop / maxScroll));
-    setTotalProgress(normalized);
 
     // Eagerly preload video 2 when user passes 15% of tour
     if (normalized > 0.12 && !shouldLoadVideo2) {
@@ -368,9 +366,13 @@ export const CompanyTourPage: React.FC = () => {
           {/* Subtle Edge Room Labels */}
           <RoomLabelOverlay markers={activeMarkers} />
 
-          {/* Timeline Progress Bar with Continuously Moving Arrow */}
+          {/* Timeline Progress Bar with Continuously Moving Arrow - 100% synchronized to actual video playback */}
           <TourProgressIndicator
-            totalProgress={totalProgress}
+            totalProgress={
+              currentTrackId === 'part1'
+                ? Math.max(0, Math.min(1, currentTrackTime / totalDuration))
+                : Math.max(0, Math.min(1, (track1.duration + currentTrackTime) / totalDuration))
+            }
             onJumpToMilestone={handleJumpToMilestone}
           />
 
