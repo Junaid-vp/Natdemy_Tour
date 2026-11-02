@@ -8,6 +8,7 @@ import { TourProgressIndicator } from './TourProgressIndicator';
 import { VideoTransitionOverlay } from './VideoTransitionOverlay';
 import { RoomDirectoryModal } from './RoomDirectoryModal';
 import { VideoLoadingState } from './VideoLoadingState';
+import { NatdemyWelcomeLoader } from './NatdemyWelcomeLoader';
 
 export const CompanyTourPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -338,18 +339,30 @@ export const CompanyTourPage: React.FC = () => {
             opacity={transitionProgress}
           />
 
-          {/* Video Loading State */}
+          {/* Video Loading State for Part 2 */}
           <VideoLoadingState
-            isLoading={!video1Loaded || (currentTrackId === 'part2' && shouldLoadVideo2 && !video2Loaded)}
+            isLoading={currentTrackId === 'part2' && shouldLoadVideo2 && !video2Loaded}
             error={loadError}
             onRetry={() => {
               setLoadError(null);
-              if (video1Ref.current) video1Ref.current.load();
               if (video2Ref.current && shouldLoadVideo2) video2Ref.current.load();
             }}
           />
         </div>
       </div>
+
+      {/* Cinematic Welcome to Natdemy Loader */}
+      <NatdemyWelcomeLoader
+        isLoaded={video1Loaded}
+        error={loadError}
+        onRetry={() => {
+          setLoadError(null);
+          if (video1Ref.current) video1Ref.current.load();
+        }}
+        onStartTour={() => {
+          setIsAutoPlaying(true);
+        }}
+      />
 
       {/* Persistent Compact Navigation Bar */}
       <TourNavbar
