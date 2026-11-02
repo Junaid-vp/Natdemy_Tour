@@ -50,10 +50,11 @@ export function useScrollVideoScrubber({
       const video = videoRef.current;
       if (!video || !Number.isFinite(time)) return;
 
-      const clampedTime = Math.max(0, Math.min(time, duration));
+      // Ensure clampedTime is at least 0.001s so mobile Safari/WebKit decodes and paints the first frame
+      const clampedTime = Math.max(0.001, Math.min(time, duration));
 
-      // Don't seek if delta is negligible (less than 1/60th second)
-      if (Math.abs(video.currentTime - clampedTime) < 0.02) {
+      // Don't seek if delta is negligible (unless video hasn't rendered first frame yet)
+      if (Math.abs(video.currentTime - clampedTime) < 0.01 && video.currentTime > 0) {
         notifyTimeUpdate(clampedTime);
         return;
       }

@@ -11,9 +11,9 @@ import { VideoLoadingState } from './VideoLoadingState';
 import { NatdemyWelcomeLoader } from './NatdemyWelcomeLoader';
 
 export const CompanyTourPage: React.FC = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const video1Ref = useRef<HTMLVideoElement>(null);
-  const video2Ref = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const video1Ref = useRef<HTMLVideoElement | null>(null);
+  const video2Ref = useRef<HTMLVideoElement | null>(null);
 
   // Total virtual scroll distance in viewport heights (gives ~9000-10000px for silky smooth scrubbing)
   const TOTAL_SCROLL_HEIGHT_VH = 1200;
@@ -37,27 +37,34 @@ export const CompanyTourPage: React.FC = () => {
   const [video2Loaded, setVideo2Loaded] = useState<boolean>(false);
   const [shouldLoadVideo2, setShouldLoadVideo2] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [quality, setQuality] = useState<'hd' | 'lite'>('hd');
-  const [hasSeekLag, setHasSeekLag] = useState<boolean>(false);
-
-  // Auto-detect budget devices or constrained networks on mount
-  useEffect(() => {
+  const [quality, setQuality] = useState<'hd' | 'lite'>(() => {
+    if (typeof window === 'undefined') return 'hd';
     try {
       const nav = navigator as any;
-      const isDataSaver = nav.connection?.saveData === true;
-      const isSlowNet = ['slow-2g', '2g', '3g'].includes(nav.connection?.effectiveType);
-      const isLowMem = typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 3;
-      const isLowCpu = typeof navigator.hardwareConcurrency === 'number' && navigator.hardwareConcurrency <= 4;
-
-      if (isDataSaver || isSlowNet || isLowMem || isLowCpu) {
-        setQuality('lite');
+      if (nav.connection?.saveData === true || ['slow-2g', '2g'].includes(nav.connection?.effectiveType)) {
+        return 'lite';
       }
     } catch {}
-  }, []);
+    return 'hd';
+  });
+  const [hasSeekLag, setHasSeekLag] = useState<boolean>(false);
 
   // Compute active video URLs based on selected quality tier
   const track1Src = quality === 'lite' && track1.liteSrc ? track1.liteSrc : track1.src;
   const track2Src = quality === 'lite' && track2.liteSrc ? track2.liteSrc : track2.src;
+
+  const handleToggleQuality = useCallback(() => {
+    setQuality((prev) => {
+      const next = prev === 'hd' ? 'lite' : 'hd';
+      const t1 = video1Ref.current?.currentTime || 0;
+      const t2 = video2Ref.current?.currentTime || 0;
+      setTimeout(() => {
+        if (video1Ref.current) video1Ref.current.currentTime = t1;
+        if (video2Ref.current && shouldLoadVideo2) video2Ref.current.currentTime = t2;
+      }, 50);
+      return next;
+    });
+  }, [shouldLoadVideo2]);
 
 
 
@@ -281,7 +288,7 @@ export const CompanyTourPage: React.FC = () => {
       }}
     >
       {/* Pinned Video Stage (Fixed viewport) */}
-      <div className="fixed inset-0 w-full h-[100dvh] overflow-hidden flex items-center justify-center bg-black">
+      <div className="fixed inset-0 w-full h-[100dvh] min-h-screen overflow-hidden flex items-center justify-center bg-black">
         {/* Subtle Ambient Background Glow */}
         <div className="absolute inset-0 bg-radial-gradient opacity-30 pointer-events-none" />
 
@@ -289,13 +296,35 @@ export const CompanyTourPage: React.FC = () => {
         <div className="relative w-full h-full sm:max-w-[480px] md:max-w-[540px] sm:aspect-[9/16] sm:rounded-3xl sm:overflow-hidden sm:border sm:border-white/10 sm:shadow-2xl bg-black">
           {/* Part 1 Video */}
           <video
-            ref={video1Ref}
+            ref={(el) => {
+              video1Ref.current = el;
+              if (el) {
+                el.muted = true;
+                el.defaultMuted = true;
+                el.setAttribute('muted', '');
+                el.setAttribute('playsinline', '');
+                el.setAttribute('webkit-playsinline', '');
+              }
+            }}
             src={track1Src}
             poster={track1.poster}
             muted
             playsInline
+            // @ts-ignore
+            webkit-playsinline="true"
             preload="auto"
-            onLoadedMetadata={() => setVideo1Loaded(true)}
+            onLoadedData={() => {
+              setVideo1Loaded(true);
+              if (video1Ref.current && video1Ref.current.currentTime === 0) {
+                video1Ref.current.currentTime = 0.001;
+              }
+            }}
+            onCanPlay={() => {
+              setVideo1Loaded(true);
+              if (video1Ref.current && video1Ref.current.currentTime === 0) {
+                video1Ref.current.currentTime = 0.001;
+              }
+            }}
             onError={() => setLoadError('Unable to load exterior video footage.')}
             className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 will-change-transform ${
               currentTrackId === 'part1' ? 'opacity-100 z-10' : 'opacity-0 z-0'
@@ -304,13 +333,25 @@ export const CompanyTourPage: React.FC = () => {
 
           {/* Part 2 Video (Lazy-loaded) */}
           <video
-            ref={video2Ref}
+            ref={(el) => {
+              video2Ref.current = el;
+              if (el) {
+                el.muted = true;
+                el.defaultMuted = true;
+                el.setAttribute('muted', '');
+                el.setAttribute('playsinline', '');
+                el.setAttribute('webkit-playsinline', '');
+              }
+            }}
             src={shouldLoadVideo2 ? track2Src : undefined}
             poster={track2.poster}
             muted
             playsInline
+            // @ts-ignore
+            webkit-playsinline="true"
             preload={shouldLoadVideo2 ? 'auto' : 'none'}
-            onLoadedMetadata={() => setVideo2Loaded(true)}
+            onLoadedData={() => setVideo2Loaded(true)}
+            onCanPlay={() => setVideo2Loaded(true)}
             onError={() => {
               if (shouldLoadVideo2) {
                 setLoadError('Unable to load interior video footage.');
@@ -360,7 +401,9 @@ export const CompanyTourPage: React.FC = () => {
           if (video1Ref.current) video1Ref.current.load();
         }}
         onStartTour={() => {
-          setIsAutoPlaying(true);
+          if (video1Ref.current) {
+            video1Ref.current.currentTime = 0.001;
+          }
         }}
       />
 
@@ -370,7 +413,7 @@ export const CompanyTourPage: React.FC = () => {
         isAutoPlaying={isAutoPlaying}
         onToggleAutoPlay={() => setIsAutoPlaying((prev) => !prev)}
         quality={quality}
-        onToggleQuality={() => setQuality((q) => (q === 'hd' ? 'lite' : 'hd'))}
+        onToggleQuality={handleToggleQuality}
       />
 
       {/* Room Directory & Timeline Modal */}
